@@ -65,17 +65,23 @@ func nx(progs []*elf.Prog) string {
     return rv
 }
 
-func canary(symbols []elf.Symbol) string {
+func canary(file *elf.File) string {
 
-    rv := DISABLED
+    symbols, _ := file.Symbols()
     for _, sym := range symbols {
-
         if bytes.HasPrefix([]byte(sym.Name), []byte(STACK_CHK)) {
-            rv = ENABLED
-            break
+            return  ENABLED
         }
     }
-    return rv
+
+    importedSymbols, _ := file.ImportedSymbols()
+    for _, imp := range importedSymbols {
+        if bytes.HasPrefix([]byte(imp.Name), []byte(STACK_CHK)) {
+            return ENABLED
+        }
+    }
+
+    return DISABLED 
 }
 
 func relro(progs []*elf.Prog, dynamic *elf.Section) string {
@@ -107,6 +113,7 @@ func relro(progs []*elf.Prog, dynamic *elf.Section) string {
 func printResult(expected, actual, name string) {
 
     fmt.Printf("%s=%s", name, actual)
+    /*
     if expected != actual {
 
         if actual == PARTIAL {
@@ -119,6 +126,7 @@ func printResult(expected, actual, name string) {
     } else {
         fmt.Print(IS_GOOD)
     }
+    */
 }
 
 func checksec(file *elf.File) {
@@ -126,15 +134,13 @@ func checksec(file *elf.File) {
     var status string
 
     dynamic := file.Section(".dynamic")
-    symbols, _ := file.Symbols()
-
-    // NX Enabled
+       // NX Enabled
     status = nx(file.Progs)
     printResult(ENABLED, status, NX)
     fmt.Print(SEP)
 
     // Stack protection enabled
-    status = canary(symbols)
+    status = canary(file)
     printResult(ENABLED, status, CANARY)
     fmt.Print(SEP)
 
