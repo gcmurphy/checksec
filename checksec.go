@@ -13,9 +13,6 @@ import (
 )
 
 const (
-    IS_GOOD   = "(good)"
-    IS_OK     = "(alright)"
-    IS_BAD    = "(bad)"
     DISABLED  = "Disabled"
     ENABLED   = "Enabled"
     PARTIAL   = "Partial"
@@ -29,10 +26,14 @@ const (
     STACK_CHK = "__stack_chk_fail"
 )
 
-func dyn(s *elf.Section, tag elf.DynTag) *elf.Dyn64 {
+func dyn(section *elf.Section, tag elf.DynTag) *elf.Dyn64 {
+
+    if section == nil {
+        return nil;
+    }
 
     var entry elf.Dyn64
-    sectionReader := io.NewSectionReader(s, 0, int64(s.Size))
+    sectionReader := io.NewSectionReader(section, 0, int64(section.Size))
     for {
 
         err := binary.Read(sectionReader, binary.LittleEndian, &entry)
@@ -86,7 +87,7 @@ func canary(file *elf.File) string {
 
 func relro(progs []*elf.Prog, dynamic *elf.Section) string {
 
-    haveRelro := false
+    haveRelro   := false
     haveBindNow := false
 
     for _, prog := range progs {
@@ -96,7 +97,9 @@ func relro(progs []*elf.Prog, dynamic *elf.Section) string {
         }
     }
 
-    haveBindNow = (dyn(dynamic, elf.DT_BIND_NOW) != nil)
+    if dynamic != nil { 
+        haveBindNow = (dyn(dynamic, elf.DT_BIND_NOW) != nil)
+    }
 
     if haveBindNow && haveRelro {
         return ENABLED
@@ -107,70 +110,45 @@ func relro(progs []*elf.Prog, dynamic *elf.Section) string {
     }
 
     return DISABLED
-
-}
-
-func printResult(expected, actual, name string) {
-
-    fmt.Printf("%s=%s", name, actual)
-    /*
-    if expected != actual {
-
-        if actual == PARTIAL {
-            fmt.Print(IS_OK)
-
-        } else {
-            fmt.Print(IS_BAD)
-        }
-
-    } else {
-        fmt.Print(IS_GOOD)
-    }
-    */
 }
 
 func checksec(file *elf.File) {
 
     var status string
-
     dynamic := file.Section(".dynamic")
-       // NX Enabled
+
+    // NX Enabled
     status = nx(file.Progs)
-    printResult(ENABLED, status, NX)
-    fmt.Print(SEP)
+    fmt.Print(NX, "=", status, SEP)
 
     // Stack protection enabled
     status = canary(file)
-    printResult(ENABLED, status, CANARY)
-    fmt.Print(SEP)
+    fmt.Print(CANARY, "=", status, SEP)
 
     // RELRO
     status = relro(file.Progs, dynamic)
-    printResult(ENABLED, status, RELRO)
-    fmt.Print(SEP)
+    fmt.Print(RELRO, "=", status, SEP)
 
     // PIE
     status = DISABLED
     if file.Type == elf.ET_DYN {
         status = ENABLED
     }
-    printResult(ENABLED, status, PIE)
-    fmt.Print(SEP)
+    fmt.Print(PIE, "=", status, SEP)
 
     // RPATH
     status = DISABLED
     if rpath := dyn(dynamic, elf.DT_RPATH); rpath != nil {
         status = ENABLED
     }
-    printResult(DISABLED, status, RPATH)
-    fmt.Print(SEP)
+    fmt.Print(RPATH, "=", status, SEP)
 
     // RUNPATH
     status = DISABLED
     if runpath := dyn(dynamic, elf.DT_RUNPATH); runpath != nil {
         status = ENABLED
     }
-    printResult(DISABLED, status, RUNPATH)
+    fmt.Print(RUNPATH, "=", status)
     fmt.Println()
 }
 
