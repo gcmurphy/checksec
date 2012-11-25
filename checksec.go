@@ -26,30 +26,38 @@ const (
     STACK_CHK = "__stack_chk_fail"
 )
 
-func dyn(section *elf.Section, tag elf.DynTag) *elf.Dyn64 {
+func tagExists(file *elf.File, tag elf.DynTag) bool {
 
-    if section == nil {
-        return nil;
-    }
+    section := file.Section(".dynamic")
+    reader := io.NewSectionReader(section, 0, int64(section.Size))
 
-    var entry elf.Dyn64
-    sectionReader := io.NewSectionReader(section, 0, int64(section.Size))
-    for {
+    switch(file.Machine){
 
-        err := binary.Read(sectionReader, binary.LittleEndian, &entry)
-        if err != nil {
-            if err != io.EOF {
-                fmt.Println(err)
+        case elf.EM_X86_64: 
+            for {
+                var entry elf.Dyn64
+                if err := binary.Read(reader, binary.LittleEndian, &entry); err != io.EOF {
+                    if elf.DynTag(entry.Tag) == tag {
+                        return true
+                    }
+                } else {
+                    break;
+                }
             }
-            break
-        }
 
-        if elf.DynTag(entry.Tag) == tag {
-            return &entry
-        }
+        case elf.EM_386:
+            for {
+                var entry elf.Dyn32
+                if err := binary.Read(reader, binary.LittleEndian, &entry); err != io.EOF {
+                    if elf.DynTag(entry.Tag) == tag {
+                        return true
+                    }
+                } else {
+                    break;
+                }
+            }
     }
-
-    return nil
+    return false  
 }
 
 func nx(progs []*elf.Prog) string {
@@ -85,23 +93,18 @@ func canary(file *elf.File) string {
     return DISABLED 
 }
 
-func relro(progs []*elf.Prog, dynamic *elf.Section) string {
+func relro(file *elf.File) string {
 
     haveRelro   := false
-    haveBindNow := false
 
-    for _, prog := range progs {
+    for _, prog := range file.Progs {
         if int64(prog.Type) == int64(C.GNU_RELRO) {
             haveRelro = true
             break
         }
     }
 
-    if dynamic != nil { 
-        haveBindNow = (dyn(dynamic, elf.DT_BIND_NOW) != nil)
-    }
-
-    if haveBindNow && haveRelro {
+    if tagExists(file, elf.DT_BIND_NOW) && haveRelro {
         return ENABLED
     }
 
@@ -115,7 +118,6 @@ func relro(progs []*elf.Prog, dynamic *elf.Section) string {
 func checksec(file *elf.File) {
 
     var status string
-    dynamic := file.Section(".dynamic")
 
     // NX Enabled
     status = nx(file.Progs)
@@ -126,7 +128,7 @@ func checksec(file *elf.File) {
     fmt.Print(CANARY, "=", status, SEP)
 
     // RELRO
-    status = relro(file.Progs, dynamic)
+    status = relro(file)
     fmt.Print(RELRO, "=", status, SEP)
 
     // PIE
@@ -138,14 +140,14 @@ func checksec(file *elf.File) {
 
     // RPATH
     status = DISABLED
-    if rpath := dyn(dynamic, elf.DT_RPATH); rpath != nil {
+    if tagExists(file, elf.DT_RPATH) {
         status = ENABLED
     }
     fmt.Print(RPATH, "=", status, SEP)
 
     // RUNPATH
     status = DISABLED
-    if runpath := dyn(dynamic, elf.DT_RUNPATH); runpath != nil {
+    if tagExists(file, elf.DT_RUNPATH) {
         status = ENABLED
     }
     fmt.Print(RUNPATH, "=", status)
@@ -158,27 +160,16 @@ func main() {
     if len(os.Args) == 1 {
 
         var buf bytes.Buffer
-        var kb [1024]byte
-        for {
-
-            nbytes, err := os.Stdin.Read(kb[:])
-            if nbytes > 0 {
-                buf.Write(kb[0:nbytes])
-            }
-            if err == io.EOF {
-                break
-            }
-            if err != nil {
-                fmt.Println(err)
-                os.Exit(1)
-            }
+        if _, err := io.Copy(&buf, os.Stdin); err != nil {
+            fmt.Println(err)
+            os.Exit(1)
         }
 
         data := buf.Bytes()
         if len(data) > 0 {
             file, e := elf.NewFile(bytes.NewReader(data))
             if e != nil {
-                fmt.Println(e)
+                fmt.Println("Not an ELF binary")
                 os.Exit(1)
             }
             checksec(file)
