@@ -62,7 +62,7 @@ func main() {
             checksec(file)
         }
 
-        // FILE [FILE]*
+    // FILE [FILE]*
     } else {
 
         for _, arg := range os.Args[1:] {
